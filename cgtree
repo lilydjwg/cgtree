@@ -9,7 +9,36 @@ from functools import partial, total_ordering
 import subprocess
 import enum
 
-from myutils import filesize
+# ---- filesize start ----
+from typing import Union, Tuple
+
+UNITS = 'KMGTPEZY'
+
+def filesize(size: int) -> str:
+  amt, unit = filesize_ex(size)
+  if unit:
+    return '%.1f%siB' % (amt, unit)
+  else:
+    return '%dB' % amt
+
+def filesize_ex(size: int) -> Tuple[Union[float, int], str]:
+  left: Union[int, float] = abs(size)
+  unit = -1
+  n = len(UNITS)
+  while left > 1100 and unit < n:
+    left = left / 1024
+    unit += 1
+  if unit == -1:
+    return size, ''
+  else:
+    if size < 0:
+      left = -left
+    return left, UNITS[unit]
+
+class FileSize(int):
+  def __str__(self) -> str:
+    return filesize(self).rstrip('iB')
+# ---- filesize end ----
 
 ShowProcess = enum.Enum('ShowProcess', ['Yes', 'No', 'Colored'])
 
