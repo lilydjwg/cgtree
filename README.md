@@ -17,7 +17,7 @@ Usage
 $ ./cgtree --help
 usage: cgtree [-h] [-p] (--swap | --zswap | --memory)
 
-show cgroup metrics using gdu / ncdu
+show cgroup metrics in a tree
 
 options:
   -h, --help     show this help message and exit
