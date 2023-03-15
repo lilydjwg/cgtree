@@ -1,0 +1,178 @@
+#!/usr/bin/python3
+
+from __future__ import annotations
+
+import os
+from os.path import join
+import sys
+from functools import partial, total_ordering
+import subprocess
+import enum
+
+from myutils import filesize
+
+ShowProcess = enum.Enum('ShowProcess', ['Yes', 'No', 'Colored'])
+
+@total_ordering
+class TreeNode:
+  info: str
+  values: list[int]
+  children: list[TreeNode]
+
+  def __init__(self, info) -> None:
+    self.info = info
+    self.values = []
+    self.children = []
+
+  def __repr__(self) -> str:
+    return f'<TreeNode {self.info} with {len(self.children)} children>'
+
+  def __lt__(self, other: TreeNode) -> bool:
+    return (self.values, self.info) < (other.values, other.info)
+
+  def __eq__(self, other: TreeNode) -> bool:
+    return self.values == other.values and self.info == other.info
+
+  def __bool__(self) -> bool:
+    return bool(self.children or any(x != 0 for x in self.values))
+
+  def format_values(self, labels) -> str:
+    if all(x == 0 for x in self.values):
+      return ''
+
+    return ' [%s]' % ', '.join(f'{labels[i]}: {filesize(x)}' for i, x in enumerate(self.values))
+
+def print_tree(node, output, labels, levelmarkers=''):
+  print(f'{levelmarkers}{node.info}{node.format_values(labels)}', file=output)
+
+  if levelmarkers and levelmarkers[-2] == '├':
+    prev_markers = levelmarkers[:-2] + '│ '
+  elif levelmarkers and levelmarkers[-2] == '└':
+    prev_markers = levelmarkers[:-2] + '  '
+  else:
+    prev_markers = ''
+
+  mid_markers = prev_markers + '├─'
+  for child in node.children[:-1]:
+    print_tree(child, output, labels, levelmarkers=mid_markers)
+  if node.children:
+    print_tree(node.children[-1], output, labels, levelmarkers=prev_markers+'└─')
+
+def get_data(func, show_process, dir='/sys/fs/cgroup'):
+  subdirs = [entry.path for entry in os.scandir(dir) if entry.is_dir()]
+  if subdirs:
+    node = read_stat(func, dir)
+    node.children = [child for d in subdirs if (child := get_data(func, show_process, d))]
+    node.children.sort()
+  else:
+    node = read_stat(func, dir, show_process=show_process)
+
+  return node
+
+def read_stat(func, d, show_process=ShowProcess.No):
+  node = TreeNode(d.rsplit('/', 1)[1])
+  func(d, node)
+  if show_process != ShowProcess.No:
+    node.children = read_process_list(d, show_process)
+  return node
+
+def read_process_list(d, show_process):
+  ret = []
+  with open(join(d, 'cgroup.procs')) as f:
+    for l in f:
+      pid = l.rstrip()
+      try:
+        with open(f'/proc/{pid}/cmdline') as f:
+          cmdline = f.read()
+        if cmdline.endswith('\0'):
+          cmdline = cmdline[:-1]
+        cmdline = cmdline.replace('\0', ' ')
+        info = f'{pid} {cmdline}'
+      except OSError:
+        info = pid
+
+      if show_process == ShowProcess.Colored:
+        info = f'\x1b[38;5;8m{info}\x1b[0m'
+
+      node = TreeNode(info)
+      ret.append(node)
+  return ret
+
+def read_memory_stat(fields, d, node):
+  node.values = [0] * len(fields)
+  try:
+    with open(join(d, 'memory.stat')) as f:
+      for l in f:
+        f, v = l[:-1].split()
+        try:
+          i = fields.index(f)
+          node.values[i] = int(v)
+        except ValueError:
+          continue
+  except FileNotFoundError:
+    pass
+
+def read_single_value_file(files, d, node):
+  node.values = [0] * len(files)
+  for i, file in enumerate(files):
+    try:
+      with open(join(d, file)) as f:
+        v = int(f.read().rstrip())
+        node.values[i] = v
+    except FileNotFoundError:
+      pass
+
+def main():
+  import argparse
+  parser = argparse.ArgumentParser(description='show cgroup metrics using gdu / ncdu')
+  parser.add_argument('-p', '--process', action='store_true',
+                      help='show processes in group')
+  group = parser.add_mutually_exclusive_group(required=True)
+  group.add_argument('--swap', action='store_true',
+                     help='show swap and zswap usage')
+  group.add_argument('--zswap', action='store_true',
+                     help='show decompressed and compressed zswap usage')
+  group.add_argument('--memory', action='store_true',
+                     help='show current and peak memory usage')
+
+  args = parser.parse_args()
+  if args.swap:
+    func = partial(read_single_value_file, ['memory.swap.current', 'memory.zswap.current', 'memory.current'])
+    labels = ['swap', 'zswap', 'mem']
+  elif args.zswap:
+    func = partial(read_memory_stat, ['zswapped', 'zswap'])
+    labels = ['zswapped', 'zswap']
+  elif args.memory:
+    func = partial(read_single_value_file, ['memory.current', 'memory.swap.current', 'memory.peak'])
+    labels = ['cur', 'swap', 'peak']
+
+  isatty = sys.stdout.isatty()
+  if args.process:
+    if isatty:
+      show_process = ShowProcess.Colored
+    else:
+      show_process = ShowProcess.Yes
+  else:
+    show_process = ShowProcess.No
+  data = get_data(func, show_process=show_process)
+  data.info = '/'
+
+  if isatty:
+    pager_cmd = ['less', '-RFXMS']
+    pager = subprocess.Popen(pager_cmd, stdin=subprocess.PIPE, text=True)
+    output = pager.stdin
+  else:
+    pager = None
+    output = sys.stdout
+  try:
+    print_tree(data, output, labels)
+  finally:
+    if pager:
+      try:
+        pager.stdin.close()
+      except BrokenPipeError:
+        pass
+      pager.wait()
+
+if __name__ == '__main__':
+  main()
