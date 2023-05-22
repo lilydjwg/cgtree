@@ -166,6 +166,7 @@ def read_io_stat(device, d, node):
           data[k] = int(v)
         node.values[0] = data['wbytes']
         node.values[1] = data['rbytes']
+        break
   except FileNotFoundError:
     pass
 
