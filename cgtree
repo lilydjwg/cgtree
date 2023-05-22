@@ -151,6 +151,24 @@ def read_single_value_file(files, d, node):
     except FileNotFoundError:
       pass
 
+def read_io_stat(device, d, node):
+  node.values = [0, 0]
+  try:
+    with open(join(d, 'io.stat')) as f:
+      for l in f:
+        dev, *values = l[:-1].split()
+        if dev != device:
+          continue
+
+        data = {}
+        for x in values:
+          k, v = x.split('=')
+          data[k] = int(v)
+        node.values[0] = data['wbytes']
+        node.values[1] = data['rbytes']
+  except FileNotFoundError:
+    pass
+
 def main():
   import argparse
   parser = argparse.ArgumentParser(description='show cgroup metrics in a tree')
@@ -163,6 +181,8 @@ def main():
                      help='show decompressed and compressed zswap usage')
   group.add_argument('--memory', action='store_true',
                      help='show current and peak memory usage')
+  group.add_argument('--io', type=str,
+                     help='show io usage for MAJOR:MINOR device')
 
   args = parser.parse_args()
   if args.swap:
@@ -174,6 +194,9 @@ def main():
   elif args.memory:
     func = partial(read_single_value_file, ['memory.current', 'memory.swap.current', 'memory.peak'])
     labels = ['cur', 'swap', 'peak']
+  elif args.io:
+    func = partial(read_io_stat, args.io)
+    labels = ['written', 'read']
 
   isatty = sys.stdout.isatty()
   if args.process:
