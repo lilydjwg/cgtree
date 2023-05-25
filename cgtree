@@ -182,7 +182,7 @@ def main():
                      help='show decompressed and compressed zswap usage')
   group.add_argument('--memory', action='store_true',
                      help='show current and peak memory usage')
-  group.add_argument('--io', type=str,
+  group.add_argument('--io', type=str, metavar='MAJOR:MINOR',
                      help='show io usage for MAJOR:MINOR device')
 
   args = parser.parse_args()

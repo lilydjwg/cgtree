@@ -15,17 +15,17 @@ Usage
 
 ```
 $ ./cgtree --help
-usage: cgtree [-h] [-p] (--swap | --zswap | --memory)
+usage: cgtree [-h] [-p] (--swap | --zswap | --memory | --io MAJOR:MINOR)
 
 show cgroup metrics in a tree
 
 options:
-  -h, --help     show this help message and exit
-  -p, --process  show processes in group
-  --swap         show swap and zswap usage
-  --zswap        show decompressed and compressed zswap usage
-  --memory       show current and peak memory usage
-  --io IO        show io usage for MAJOR:MINOR device
+  -h, --help        show this help message and exit
+  -p, --process     show processes in group
+  --swap            show swap and zswap usage
+  --zswap           show decompressed and compressed zswap usage
+  --memory          show current and peak memory usage
+  --io MAJOR:MINOR  show io usage for MAJOR:MINOR device
 ```
 
 Example output:
