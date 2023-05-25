@@ -25,6 +25,7 @@ options:
   --swap         show swap and zswap usage
   --zswap        show decompressed and compressed zswap usage
   --memory       show current and peak memory usage
+  --io IO        show io usage for MAJOR:MINOR device
 ```
 
 Example output:
