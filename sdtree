@@ -1,0 +1,210 @@
+#!/usr/bin/python3
+
+from __future__ import annotations
+
+import sys
+from functools import total_ordering
+import subprocess
+import enum
+
+import pystemd.dbuslib
+from pystemd.base import SDObject
+
+# ---- filesize start ----
+from typing import Union, Tuple
+
+UNITS = 'KMGTPEZY'
+
+def filesize(size: int) -> str:
+  amt, unit = filesize_ex(size)
+  if unit:
+    return '%.1f%siB' % (amt, unit)
+  else:
+    return '%dB' % amt
+
+def filesize_ex(size: int) -> Tuple[Union[float, int], str]:
+  left: Union[int, float] = abs(size)
+  unit = -1
+  n = len(UNITS)
+  while left > 1100 and unit < n:
+    left = left / 1024
+    unit += 1
+  if unit == -1:
+    return size, ''
+  else:
+    if size < 0:
+      left = -left
+    return left, UNITS[unit]
+
+class FileSize(int):
+  def __str__(self) -> str:
+    return filesize(self).rstrip('iB')
+# ---- filesize end ----
+
+ShowProcess = enum.Enum('ShowProcess', ['Yes', 'No', 'Colored'])
+
+@total_ordering
+class TreeNode:
+  info: str
+  values: list[int]
+  children: dict[str, TreeNode]
+  processes: list[str]
+
+  def __init__(self, info) -> None:
+    self.info = info
+    self.values = []
+    self.children = {}
+    self.processes = []
+
+  def __repr__(self) -> str:
+    return f'<TreeNode {self.info} with {len(self.children)} children>'
+
+  def __lt__(self, other: TreeNode) -> bool:
+    return (self.values, self.info) < (other.values, other.info)
+
+  def __eq__(self, other: TreeNode) -> bool:
+    return self.values == other.values and self.info == other.info
+
+  def __bool__(self) -> bool:
+    return bool(self.children or any(x != 0 for x in self.values))
+
+  def format_values(self, labels) -> str:
+    if all(x == 0 for x in self.values):
+      return ''
+
+    return ' [%s]' % ', '.join(f'{labels[i]}: {filesize(x)}' for i, x in enumerate(self.values))
+
+def print_tree(node, output, labels, levelmarkers=''):
+  print(f'{levelmarkers}{node.info}{node.format_values(labels)}', file=output)
+
+  if levelmarkers and levelmarkers[-2] == '├':
+    prev_markers = levelmarkers[:-2] + '│ '
+  elif levelmarkers and levelmarkers[-2] == '└':
+    prev_markers = levelmarkers[:-2] + '  '
+  else:
+    prev_markers = ''
+
+  mid_markers = prev_markers + '├─'
+  if node.children:
+    children = sorted(node.children.values())
+  elif node.processes:
+    children = node.processes
+  else:
+    return
+
+  for child in children[:-1]:
+    print_tree(child, output, labels, levelmarkers=mid_markers)
+  if children:
+    print_tree(children[-1], output, labels, levelmarkers=prev_markers+'└─')
+
+def get_data(bus, properties, show_process):
+  m = pystemd.systemd1.Manager(bus=bus)
+  m.load()
+
+  cg2nodes = {}
+  for name, _, _, _, _, _, path, *_ in m.Manager.ListUnitsByPatterns([], ['*.slice', '*.service', '*.scope']):
+    node = TreeNode(name.decode('ascii'))
+    cg, values, ps = read_systemd_property(bus, properties, path, show_process)
+    node.values = values
+    if show_process == ShowProcess.Colored:
+      node.processes = [TreeNode(f'\x1b[38;5;8m{p}\x1b[0m') for p in ps]
+    elif show_process == ShowProcess.Yes:
+      node.processes = [TreeNode(p) for p in ps]
+    cg2nodes[cg] = node
+
+  root = cg2nodes['/']
+  for cg, node in sorted(cg2nodes.items()):
+    if cg == '/' or not cg:
+      continue
+    cgpath = cg.split('/')
+    p = root
+    path = cgpath[1:-1]
+    path.reverse()
+    while True:
+      try:
+        a = path.pop()
+      except IndexError:
+        break
+      p = p.children[a]
+    p.children[cgpath[-1]] = node
+
+  return root
+
+def read_systemd_property(bus, properties, path, show_process):
+  u = SDObject(
+    destination = b"org.freedesktop.systemd1",
+    path = path,
+    bus = bus,
+  )
+  u.load()
+
+  if show_process is ShowProcess.No:
+    ps = None
+  else:
+    ps = [f"{p[1]} {p[2].decode(errors='replace')}" for p in u.GetProcesses()]
+  rs = [getattr(u, p) for p in properties]
+  rs = [0 if r == 2**64-1 else r for r in rs]
+  return u.ControlGroup.decode('ascii'), rs, ps
+
+def get_bus(host):
+  if host is None:
+    bus = pystemd.dbuslib.DBus()
+  else:
+    bus = pystemd.dbuslib.DBusRemote(host.encode('ascii'))
+  bus.open()
+  return bus
+
+def main():
+  import argparse
+  parser = argparse.ArgumentParser(description='show systemd unit metrics in a tree')
+  parser.add_argument('-p', '--process', action='store_true',
+                      help='show processes in group')
+  parser.add_argument('-H', '--host', type=str,
+                      help='ssh to this host for data')
+  group = parser.add_mutually_exclusive_group(required=True)
+  group.add_argument('--network-in', action='store_true',
+                     help='show network traffic sorted by ingress')
+  group.add_argument('--network-out', action='store_true',
+                     help='show network traffic sorted by egress')
+
+  args = parser.parse_args()
+
+  if args.network_in:
+    properties = ['IPIngressBytes', 'IPEgressBytes']
+    labels = ['in', 'out']
+  elif args.network_in:
+    properties = ['IPEgressBytes', 'IPIngressBytes']
+    labels = ['out', 'in']
+
+  isatty = sys.stdout.isatty()
+  if args.process:
+    if isatty:
+      show_process = ShowProcess.Colored
+    else:
+      show_process = ShowProcess.Yes
+  else:
+    show_process = ShowProcess.No
+
+  bus = get_bus(host=args.host)
+  data = get_data(bus, properties, show_process=show_process)
+  data.info = '/'
+
+  if isatty:
+    pager_cmd = ['less', '-RFXMS']
+    pager = subprocess.Popen(pager_cmd, stdin=subprocess.PIPE, text=True)
+    output = pager.stdin
+  else:
+    pager = None
+    output = sys.stdout
+  try:
+    print_tree(data, output, labels)
+  finally:
+    if pager:
+      try:
+        pager.stdin.close()
+      except BrokenPipeError:
+        pass
+      pager.wait()
+
+if __name__ == '__main__':
+  main()

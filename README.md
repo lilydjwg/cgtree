@@ -3,12 +3,23 @@ List cgroups info in a tree
 
 Like `systemctl status`, but different info attached.
 
+`cgtree` examines local cgroups. `sdtree` connects to (local or remote) systemd instance.
+
 Requirement
 ----
 
+All:
+
 * Python 3.8+
-* cgroups v2 (unified hierarchy)
 * less
+
+cgtree:
+
+* cgroups v2 (unified hierarchy)
+
+sdtree:
+
+* [pystemd](https://github.com/systemd/pystemd)
 
 Usage
 ----
@@ -26,6 +37,20 @@ options:
   --zswap           show decompressed and compressed zswap usage
   --memory          show current and peak memory usage
   --io MAJOR:MINOR  show io usage for MAJOR:MINOR device
+```
+
+```
+$ ./sdtree --help
+usage: sdtree [-h] [-p] [-H HOST] (--network-in | --network-out)
+
+show systemd unit metrics in a tree
+
+options:
+  -h, --help            show this help message and exit
+  -p, --process         show processes in group
+  -H HOST, --host HOST  ssh to this host for data
+  --network-in          show network traffic sorted by ingress
+  --network-out         show network traffic sorted by egress
 ```
 
 Example output:
