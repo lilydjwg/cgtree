@@ -164,8 +164,11 @@ def read_io_stat(device, d, node):
         for x in values:
           k, v = x.split('=')
           data[k] = int(v)
-        node.values[0] = data['wbytes']
-        node.values[1] = data['rbytes']
+        try:
+          node.values[0] = data['wbytes']
+          node.values[1] = data['rbytes']
+        except KeyError:
+          pass
         break
   except FileNotFoundError:
     pass
