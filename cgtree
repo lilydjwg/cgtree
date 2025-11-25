@@ -8,6 +8,7 @@ import sys
 from functools import partial, total_ordering
 import subprocess
 import enum
+from typing import Callable
 
 # ---- filesize start ----
 from typing import Union, Tuple
@@ -43,10 +44,11 @@ class FileSize(int):
 ShowProcess = enum.Enum('ShowProcess', ['Yes', 'No', 'Colored'])
 
 @total_ordering
-class TreeNode:
+class TreeNode[T]:
   info: str
-  values: list[int]
+  values: list[T]
   children: list[TreeNode]
+  formatter: Callable[[T], str] = filesize
 
   def __init__(self, info) -> None:
     self.info = info
@@ -69,7 +71,7 @@ class TreeNode:
     if all(x == 0 for x in self.values):
       return ''
 
-    return ' [%s]' % ', '.join(f'{labels[i]}: {filesize(x)}' for i, x in enumerate(self.values))
+    return ' [%s]' % ', '.join(f'{labels[i]}: {self.__class__.formatter(x)}' for i, x in enumerate(self.values))
 
 def print_tree(node, output, labels, levelmarkers=''):
   print(f'{levelmarkers}{node.info}{node.format_values(labels)}', file=output)
@@ -173,6 +175,30 @@ def read_io_stat(device, d, node):
   except FileNotFoundError:
     pass
 
+def read_pressure(fields, line, col, d, node):
+  node.values = [0] * len(fields)
+  for field in fields:
+    try:
+      with open(join(d, f'{field}.pressure')) as f:
+        if field == 'irq':
+          line_prefix = 'full'
+        else:
+          line_prefix = line
+        for l in f:
+          if l.startswith(line_prefix):
+            _, *values = l.split()
+            value_dict = dict(item.split('=', 1) for item in values)
+            i = fields.index(field)
+            node.values[i] = float(value_dict[col])
+            break
+    except FileNotFoundError:
+      pass
+    except OSError as e:
+      if e.errno == 95: # EOPNOTSUPP
+        pass
+      else:
+        raise
+
 def main():
   import argparse
   parser = argparse.ArgumentParser(description='show cgroup metrics in a tree')
@@ -187,6 +213,8 @@ def main():
                      help='show current and peak memory usage')
   group.add_argument('--io', type=str, metavar='MAJOR:MINOR',
                      help='show io usage for MAJOR:MINOR device')
+  group.add_argument('--pressure', action='store_true',
+                     help='PSI information by cgroup')
 
   args = parser.parse_args()
   if args.swap:
@@ -201,6 +229,15 @@ def main():
   elif args.io:
     func = partial(read_io_stat, args.io)
     labels = ['written', 'read']
+  elif args.pressure:
+    func = partial(
+      read_pressure, ['cpu', 'memory', 'io', 'irq'], 'some', 'avg10')
+    labels = ['CPU', 'MEM', 'IO', 'IRQ']
+
+    def format_pressure(x: float) -> str:
+      return '%.2f' % x
+
+    TreeNode.formatter = format_pressure
 
   isatty = sys.stdout.isatty()
   if args.process:
