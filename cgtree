@@ -117,7 +117,7 @@ def read_process_list(d, show_process):
           cmdline = f.read()
         if cmdline.endswith('\0'):
           cmdline = cmdline[:-1]
-        cmdline = cmdline.replace('\0', ' ')
+        cmdline = cmdline.replace('\0', ' ').replace('\n', r'\n')
         info = f'{pid} {cmdline}'
       except OSError:
         info = pid
