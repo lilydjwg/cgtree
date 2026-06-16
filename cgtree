@@ -104,7 +104,11 @@ def read_stat(func, d, show_process=ShowProcess.No):
   node = TreeNode(d.rsplit('/', 1)[1])
   func(d, node)
   if show_process != ShowProcess.No:
-    node.children = read_process_list(d, show_process)
+    try:
+      node.children = read_process_list(d, show_process)
+    except OSError as e:
+      if e.errno != 95: # Operation not supported
+        raise
   return node
 
 def read_process_list(d, show_process):
